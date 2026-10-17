@@ -96,6 +96,9 @@ const asText = (value: unknown): string => (
   typeof value === 'string' ? value : value == null ? '' : String(value)
 );
 
+const parseRuntime = (value: unknown): ContainerRuntime | undefined =>
+  value === 'docker' || value === 'podman' ? value : undefined;
+
 const report = (error: unknown): void => {
   const message = error instanceof HostRequestError
     ? error.message
@@ -172,6 +175,7 @@ const parseContainers = (body: string): ContainerRow[] => parseArray(body, 'cont
     ports: parsePorts(row.ports),
     compose: parseCompose(row.compose),
     stats,
+    runtime: parseRuntime(row.runtime) ?? runtime,
   };
 });
 
@@ -185,6 +189,7 @@ const parseImages = (body: string): ImageRow[] => parseArray(body, 'images', (ro
     size: asText(row.size),
     created: asText(row.created),
     used: Boolean(row.used),
+    runtime: parseRuntime(row.runtime),
   };
 });
 
@@ -197,6 +202,7 @@ const parseVolumes = (body: string): VolumeRow[] => parseArray(body, 'volumes', 
     scope: asText(row.scope),
     mountpoint: asText(row.mountpoint),
     used: Boolean(row.used),
+    runtime: parseRuntime(row.runtime),
   };
 });
 
@@ -210,6 +216,7 @@ const parseNetworks = (body: string): NetworkRow[] => parseArray(body, 'networks
     driver: asText(row.driver),
     scope: asText(row.scope),
     used: Boolean(row.used),
+    runtime: parseRuntime(row.runtime),
   };
 });
 
@@ -571,15 +578,26 @@ const buildContainerRow = (c: ContainerRow): HTMLElement => {
   main.style.cursor = 'pointer';
   main.title = 'Click to inspect container details';
 
+  const nameRow = document.createElement('div');
+  nameRow.className = 'docker-name-row';
+
   const name = document.createElement('div');
   name.className = 'docker-name';
   name.textContent = c.compose?.service ? `${c.compose.service} (${displayName(c)})` : displayName(c);
+
+  const runtimeChip = document.createElement('span');
+  runtimeChip.className = 'docker-runtime-chip';
+  runtimeChip.dataset.runtime = c.runtime;
+  runtimeChip.textContent = c.runtime;
+
+  nameRow.appendChild(name);
+  nameRow.appendChild(runtimeChip);
 
   const meta = document.createElement('div');
   meta.className = 'docker-meta';
   meta.textContent = `${c.image} • ${c.status}`;
 
-  main.appendChild(name);
+  main.appendChild(nameRow);
   main.appendChild(meta);
 
   if (c.ports.length > 0) {

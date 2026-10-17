@@ -372,6 +372,28 @@
     .docker-name-button:hover {
       color: var(--primary, var(--oc-primary, inherit));
     }
+    .docker-name-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+    .docker-runtime-chip {
+      flex: 0 0 auto;
+      border-radius: 999px;
+      padding: 1px 7px;
+      font-size: 0.625rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      line-height: 1.5;
+      color: #818cf8;
+      background: rgba(79, 70, 229, 0.18);
+    }
+    .docker-runtime-chip[data-runtime="docker"] {
+      color: #38bdf8;
+      background: rgba(2, 132, 199, 0.2);
+    }
     .docker-meta,
     .docker-status {
       overflow: hidden;

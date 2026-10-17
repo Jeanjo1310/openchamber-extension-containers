@@ -27,6 +27,7 @@ export type ContainerRow = {
   ports: PublishedPort[];
   compose: ComposeInfo | null;
   stats: ContainerStats | null;
+  runtime: ContainerRuntime;
 };
 
 export type ImageRow = {
@@ -36,6 +37,7 @@ export type ImageRow = {
   size: string;
   created: string;
   used: boolean;
+  runtime?: ContainerRuntime;
 };
 
 export type VolumeRow = {
@@ -44,6 +46,7 @@ export type VolumeRow = {
   scope: string;
   mountpoint: string;
   used: boolean;
+  runtime?: ContainerRuntime;
 };
 
 export type NetworkRow = {
@@ -52,6 +55,7 @@ export type NetworkRow = {
   driver: string;
   scope: string;
   used: boolean;
+  runtime?: ContainerRuntime;
 };
 
 export type InspectView = {

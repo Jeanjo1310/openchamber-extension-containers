@@ -1,6 +1,6 @@
 {
   "name": "openchamber-extension-containers",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Containers extension for OpenChamber — manage Docker or Podman containers, images, volumes, networks, logs, exec and storage.",
   "license": "MIT",
   "type": "module",

@@ -253,6 +253,7 @@ const healthFromInspect = (info) => {
 };
 
 const listContainers = async () => {
+  const runtime = RUNTIME;
   const rows = parseJsonLines(await docker([
     'ps',
     '-a',
@@ -320,6 +321,7 @@ const listContainers = async () => {
       ports: info ? publishedPorts(info) : [],
       compose: composeFromLabels(labels),
       stats,
+      runtime,
     };
   });
 };
@@ -377,6 +379,7 @@ const collectUsedNetworkKeys = async () => {
 };
 
 const listImages = async () => {
+  const runtime = RUNTIME;
   const rows = parseJsonLines(await docker([
     'images',
     '--format',
@@ -411,11 +414,13 @@ const listImages = async () => {
       size,
       created,
       used: isUsed,
+      runtime,
     };
   });
 };
 
 const listVolumes = async () => {
+  const runtime = RUNTIME;
   const rows = parseJsonLines(await docker([
     'volume',
     'ls',
@@ -429,10 +434,12 @@ const listVolumes = async () => {
     scope: row.Scope ?? '',
     mountpoint: row.Mountpoint ?? '',
     used: used.has(String(row.Name || '')),
+    runtime,
   }));
 };
 
 const listNetworks = async () => {
+  const runtime = RUNTIME;
   const rows = parseJsonLines(await docker([
     'network',
     'ls',
@@ -454,6 +461,7 @@ const listNetworks = async () => {
       driver: row.Driver ?? row.driver ?? '',
       scope: row.Scope ?? row.scope ?? '',
       used: isUsed,
+      runtime,
     };
   });
 };

@@ -1,15 +1,17 @@
 > ⚠️ **Personal work in progress — NOT an official OpenChamber extension.**
 > This is a personal, public project shared openly (MIT, like other extensions). It is not submitted to any official catalog. Feedback and improvements are welcome — use at your own risk until the author approves it for general use.
 
+## Credits / Attribution
+
+This extension is a **fork of [`openchamber/openchamber-extension-docker`](https://github.com/openchamber/openchamber-extension-docker)** — MIT licensed, © its original authors at the OpenChamber project.
+
+It was adapted to be **dual-runtime (Docker + Podman)**: runtime selector with autodetection and the `GET /runtime` + `POST /runtime` endpoints, runtime-aware normalizers for `ps` / `stats` / `images` / `networks`, and the `docker` / `podman` exec permissions. The original panel, service, views, and MIT license are reused here.
+
 # Containers extension for OpenChamber
 
 A comprehensive OpenChamber GUI panel to inspect and manage **Docker or Podman** containers, Compose stacks, images, volumes, networks, and system storage.
 
 It shells out to the `docker` or `podman` binary on PATH using host execution permissions (`permissions.exec`). The active runtime is auto-detected at startup (Podman first, then Docker) and can be switched at any time from the panel header.
-
-> **Credit** — This extension is a dual-runtime port of
-> [`openchamber/openchamber-extension-docker`](https://github.com/openchamber/openchamber-extension-docker),
-> created by the OpenChamber project. The original panel, service, views, and MIT license are reused here.
 
 ## Runtimes
 

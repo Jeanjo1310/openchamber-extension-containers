@@ -1,0 +1,44 @@
+{
+  "name": "openchamber-extension-containers",
+  "version": "0.1.0",
+  "description": "Containers extension for OpenChamber — manage Docker or Podman containers, images, volumes, networks, logs, exec and storage.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "bundle": "openchamber-guest-bundle panel/main.ts panel/main.js",
+    "type-check": "tsc --noEmit",
+    "pack": "bun run bundle && zip -r containers-extension.zip package.json icon.svg panel/ agent/ README.md LICENSE",
+    "clean": "node -e \"process.exit(0)\""
+  },
+  "dependencies": {
+    "@openchamber/sdk": "^1.23.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  },
+  "openchamber": {
+    "apiVersion": 1,
+    "engines": {
+      "openchamber": ">=1.22.0"
+    },
+    "contributes": {
+      "panel": {
+        "id": "containers",
+        "name": "Containers",
+        "icon": "icon.svg",
+        "entry": "panel/index.html"
+      },
+      "service": {
+        "entry": "agent/main.js",
+        "runtime": "host",
+        "permissions": {
+          "exec": [
+            "docker",
+            "podman"
+          ]
+        }
+      },
+      "attach": false
+    }
+  }
+}

@@ -98,18 +98,80 @@ const isSafePath = (s) => {
 const sendBodyTooLarge = (res) => sendJson(res, 400, { error: 'body-too-large', message: 'Request body exceeds 1 MiB.' });
 const sendBadId = (res) => sendJson(res, 400, { error: 'bad-id', message: 'Invalid identifier.' });
 
-const docker = async (args, { maxBuffer = 2 * 1024 * 1024, timeout = 15_000 } = {}) => {
-  const { stdout } = await execFileAsync(RUNTIME, args, { maxBuffer, timeout, encoding: 'utf8' });
+const runCli = async (runtime, args, { maxBuffer = 2 * 1024 * 1024, timeout = 15_000 } = {}) => {
+  const { stdout } = await execFileAsync(runtime, args, { maxBuffer, timeout, encoding: 'utf8' });
   return stdout;
 };
 
-const dockerBuffer = async (args, { maxBuffer = 2 * 1024 * 1024, timeout = 15_000 } = {}) => {
-  const { stdout } = await execFileAsync(RUNTIME, args, {
+const runCliBuffer = async (runtime, args, { maxBuffer = 2 * 1024 * 1024, timeout = 15_000 } = {}) => {
+  const { stdout } = await execFileAsync(runtime, args, {
     maxBuffer,
     timeout,
     encoding: 'buffer',
   });
   return stdout;
+};
+
+/** Active-runtime helpers (single-runtime routes). */
+const docker = async (args, opts) => runCli(RUNTIME, args, opts);
+const dockerBuffer = async (args, opts) => runCliBuffer(RUNTIME, args, opts);
+
+/** Which runtime owns a container id — cached after first lookup. */
+const idRuntimeCache = new Map();
+const resolveRuntimeForId = async (id) => {
+  const short = shortId(id);
+  if (idRuntimeCache.has(short)) {
+    return idRuntimeCache.get(short);
+  }
+  for (const runtime of ['podman', 'docker']) {
+    try {
+      const infos = JSON.parse(await runCli(runtime, ['inspect', id], { timeout: 10_000 }));
+      if (Array.isArray(infos) && infos.length > 0) {
+        idRuntimeCache.set(short, runtime);
+        return runtime;
+      }
+    } catch {
+      // not present in this runtime
+    }
+  }
+  return RUNTIME;
+};
+
+const RUNTIME_FILTERS = ['all', 'docker', 'podman'];
+
+/** Parse ?runtime= — absent/empty means 'all', unknown value returns null. */
+const parseRuntimeFilter = (raw) => {
+  if (raw === null || raw === undefined || raw === '') {
+    return 'all';
+  }
+  return RUNTIME_FILTERS.includes(raw) ? raw : null;
+};
+
+/** Query one runtime, or merge both when filter is 'all'. */
+const listAcrossRuntimes = async (listFn, filter) => {
+  if (filter !== 'all') {
+    try {
+      return { ok: true, items: await listFn(filter), partial: [] };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false, status: 502, error: 'container-failed', message };
+    }
+  }
+  const settled = await Promise.allSettled([listFn('docker'), listFn('podman')]);
+  const items = [];
+  const partial = [];
+  settled.forEach((result, index) => {
+    const runtime = index === 0 ? 'docker' : 'podman';
+    if (result.status === 'fulfilled') {
+      items.push(...result.value);
+    } else {
+      partial.push(runtime);
+    }
+  });
+  if (items.length === 0 && partial.length === 2) {
+    return { ok: false, status: 502, error: 'runtime-unavailable', message: 'Both container runtimes failed.' };
+  }
+  return { ok: true, items, partial };
 };
 
 const parseJsonLines = (stdout) => {
@@ -252,9 +314,8 @@ const healthFromInspect = (info) => {
   return status || null;
 };
 
-const listContainers = async () => {
-  const runtime = RUNTIME;
-  const rows = parseJsonLines(await docker([
+const listContainers = async (runtime = RUNTIME) => {
+  const rows = parseJsonLines(await runCli(runtime, [
     'ps',
     '-a',
     '--format',
@@ -266,7 +327,7 @@ const listContainers = async () => {
     if (batch.length === 0) {
       continue;
     }
-    const infos = JSON.parse(await docker(['inspect', ...batch]));
+    const infos = JSON.parse(await runCli(runtime, ['inspect', ...batch]));
     for (const info of infos) {
       inspectByShort.set(shortId(info.Id), info);
     }
@@ -274,7 +335,8 @@ const listContainers = async () => {
 
   const statsByShort = new Map();
   try {
-    const statsRows = parseJsonLines(await docker(
+    const statsRows = parseJsonLines(await runCli(
+      runtime,
       ['stats', '--no-stream', '--format', '{{json .}}'],
       { timeout: 20_000 },
     ));
@@ -326,12 +388,12 @@ const listContainers = async () => {
   });
 };
 
-const collectUsedImageKeys = async () => {
-  const ids = (await docker(['ps', '-aq'])).trim().split('\n').filter(Boolean);
+const collectUsedImageKeys = async (runtime = RUNTIME) => {
+  const ids = (await runCli(runtime, ['ps', '-aq'])).trim().split('\n').filter(Boolean);
   const used = new Set();
   for (const batch of chunk(ids, 40)) {
     if (batch.length === 0) continue;
-    const infos = JSON.parse(await docker(['inspect', ...batch]));
+    const infos = JSON.parse(await runCli(runtime, ['inspect', ...batch]));
     for (const info of infos) {
       if (info.Image) used.add(String(info.Image));
       if (info.ImageID) used.add(String(info.ImageID));
@@ -342,12 +404,12 @@ const collectUsedImageKeys = async () => {
   return used;
 };
 
-const collectUsedVolumeNames = async () => {
-  const ids = (await docker(['ps', '-aq'])).trim().split('\n').filter(Boolean);
+const collectUsedVolumeNames = async (runtime = RUNTIME) => {
+  const ids = (await runCli(runtime, ['ps', '-aq'])).trim().split('\n').filter(Boolean);
   const used = new Set();
   for (const batch of chunk(ids, 40)) {
     if (batch.length === 0) continue;
-    const infos = JSON.parse(await docker(['inspect', ...batch]));
+    const infos = JSON.parse(await runCli(runtime, ['inspect', ...batch]));
     for (const info of infos) {
       for (const mount of info.Mounts || []) {
         if (mount?.Type === 'volume' && mount.Name) {
@@ -359,12 +421,12 @@ const collectUsedVolumeNames = async () => {
   return used;
 };
 
-const collectUsedNetworkKeys = async () => {
-  const ids = (await docker(['ps', '-aq'])).trim().split('\n').filter(Boolean);
+const collectUsedNetworkKeys = async (runtime = RUNTIME) => {
+  const ids = (await runCli(runtime, ['ps', '-aq'])).trim().split('\n').filter(Boolean);
   const used = new Set();
   for (const batch of chunk(ids, 40)) {
     if (batch.length === 0) continue;
-    const infos = JSON.parse(await docker(['inspect', ...batch]));
+    const infos = JSON.parse(await runCli(runtime, ['inspect', ...batch]));
     for (const info of infos) {
       const networks = info.NetworkSettings?.Networks;
       if (networks && typeof networks === 'object') {
@@ -378,14 +440,13 @@ const collectUsedNetworkKeys = async () => {
   return used;
 };
 
-const listImages = async () => {
-  const runtime = RUNTIME;
-  const rows = parseJsonLines(await docker([
+const listImages = async (runtime = RUNTIME) => {
+  const rows = parseJsonLines(await runCli(runtime, [
     'images',
     '--format',
     '{{json .}}',
   ]));
-  const used = await collectUsedImageKeys();
+  const used = await collectUsedImageKeys(runtime);
   const usedList = [...used];
   return rows.map((row) => {
     const id = String(row.ID ?? row.Id ?? '');
@@ -419,15 +480,14 @@ const listImages = async () => {
   });
 };
 
-const listVolumes = async () => {
-  const runtime = RUNTIME;
-  const rows = parseJsonLines(await docker([
+const listVolumes = async (runtime = RUNTIME) => {
+  const rows = parseJsonLines(await runCli(runtime, [
     'volume',
     'ls',
     '--format',
     '{{json .}}',
   ]));
-  const used = await collectUsedVolumeNames();
+  const used = await collectUsedVolumeNames(runtime);
   return rows.map((row) => ({
     name: row.Name,
     driver: row.Driver,
@@ -438,15 +498,14 @@ const listVolumes = async () => {
   }));
 };
 
-const listNetworks = async () => {
-  const runtime = RUNTIME;
-  const rows = parseJsonLines(await docker([
+const listNetworks = async (runtime = RUNTIME) => {
+  const rows = parseJsonLines(await runCli(runtime, [
     'network',
     'ls',
     '--format',
     '{{json .}}',
   ]));
-  const used = await collectUsedNetworkKeys();
+  const used = await collectUsedNetworkKeys(runtime);
   const usedList = [...used];
   return rows.map((row) => {
     const id = String(row.ID ?? row.id ?? '');
@@ -502,16 +561,16 @@ const publicInspect = (info) => {
   };
 };
 
-const getContainerInspect = async (id) => {
-  const info = await inspectContainer(id);
+const getContainerInspect = async (id, runtime = RUNTIME) => {
+  const info = await inspectContainer(id, runtime);
   if (!info) {
     return { ok: false, status: 404, error: 'not-found', message: 'Container not found.' };
   }
   return { ok: true, inspect: publicInspect(info) };
 };
 
-const inspectContainer = async (id) => {
-  const infos = JSON.parse(await docker(['inspect', id]));
+const inspectContainer = async (id, runtime = RUNTIME) => {
+  const infos = JSON.parse(await runCli(runtime, ['inspect', id]));
   return infos[0] ?? null;
 };
 
@@ -521,8 +580,8 @@ const containerRunning = (info) => Boolean(info?.State?.Running);
  * List one directory inside a running container.
  * Uses find so dotfiles always appear (ls -A is missing on some images).
  */
-const listContainerFs = async (id, pathValue) => {
-  const info = await inspectContainer(id);
+const listContainerFs = async (id, pathValue, runtime = RUNTIME) => {
+  const info = await inspectContainer(id, runtime);
   if (!info) {
     return { ok: false, status: 404, error: 'not-found', message: 'Container not found.' };
   }
@@ -565,7 +624,8 @@ const listContainerFs = async (id, pathValue) => {
 
   let stdout = '';
   try {
-    stdout = await docker(
+    stdout = await runCliBuffer(
+      runtime,
       ['exec', id, 'sh', '-c', script, 'sh', pathValue, String(FS_LIST_MAX)],
       { maxBuffer: 1 * 1024 * 1024, timeout: 12_000 },
     );
@@ -639,8 +699,8 @@ const listContainerFs = async (id, pathValue) => {
   };
 };
 
-const readContainerFile = async (id, pathValue) => {
-  const info = await inspectContainer(id);
+const readContainerFile = async (id, pathValue, runtime = RUNTIME) => {
+  const info = await inspectContainer(id, runtime);
   if (!info) {
     return { ok: false, status: 404, error: 'not-found', message: 'Container not found.' };
   }
@@ -665,7 +725,8 @@ const readContainerFile = async (id, pathValue) => {
 
   let buffer;
   try {
-    buffer = await dockerBuffer(
+    buffer = await runCliBuffer(
+      runtime,
       ['exec', id, 'sh', '-c', script, 'sh', pathValue, String(FS_FILE_MAX + 1)],
       { maxBuffer: FS_FILE_MAX + 64 * 1024, timeout: 12_000 },
     );
@@ -724,8 +785,8 @@ const mergeAndSortLogs = (stdout = '', stderr = '') => {
 };
 
 /** docker logs writes container stderr to process stderr — merge both. */
-const readContainerLogs = async (id, tailRaw) => {
-  const info = await inspectContainer(id);
+const readContainerLogs = async (id, tailRaw, runtime = RUNTIME) => {
+  const info = await inspectContainer(id, runtime);
   if (!info) {
     return { ok: false, status: 404, error: 'not-found', message: 'Container not found.' };
   }
@@ -736,7 +797,7 @@ const readContainerLogs = async (id, tailRaw) => {
 
   try {
     const { stdout, stderr } = await execFileAsync(
-      RUNTIME,
+      runtime,
       ['logs', '--timestamps', '--tail', String(tail), id],
       {
         encoding: 'utf8',
@@ -760,13 +821,13 @@ const readContainerLogs = async (id, tailRaw) => {
   }
 };
 
-const execInContainer = async (id, command) => {
+const execInContainer = async (id, command, runtime = RUNTIME) => {
   const cleanCmd = String(command || '').trim();
   if (!cleanCmd) {
     return { ok: false, status: 400, error: 'bad-cmd', message: 'Command is empty.' };
   }
   try {
-    const { stdout, stderr } = await execFileAsync(RUNTIME, ['exec', id, 'sh', '-c', cleanCmd], {
+    const { stdout, stderr } = await execFileAsync(runtime, ['exec', id, 'sh', '-c', cleanCmd], {
       maxBuffer: 2 * 1024 * 1024,
       timeout: 30_000,
       encoding: 'utf8',
@@ -828,22 +889,62 @@ const server = http.createServer(async (req, res) => {
 
   try {
     if (req.method === 'GET' && url.pathname === '/containers') {
-      sendJson(res, 200, { containers: await listContainers() });
+      const filter = parseRuntimeFilter(url.searchParams.get('runtime'));
+      if (!filter) {
+        sendJson(res, 400, { error: 'bad-runtime', message: 'runtime must be all, docker or podman.' });
+        return;
+      }
+      const result = await listAcrossRuntimes((runtime) => listContainers(runtime), filter);
+      if (!result.ok) {
+        sendJson(res, result.status, { error: result.error, message: result.message });
+        return;
+      }
+      sendJson(res, 200, { containers: result.items, partial: result.partial });
       return;
     }
 
     if (req.method === 'GET' && url.pathname === '/images') {
-      sendJson(res, 200, { images: await listImages() });
+      const filter = parseRuntimeFilter(url.searchParams.get('runtime'));
+      if (!filter) {
+        sendJson(res, 400, { error: 'bad-runtime', message: 'runtime must be all, docker or podman.' });
+        return;
+      }
+      const result = await listAcrossRuntimes((runtime) => listImages(runtime), filter);
+      if (!result.ok) {
+        sendJson(res, result.status, { error: result.error, message: result.message });
+        return;
+      }
+      sendJson(res, 200, { images: result.items, partial: result.partial });
       return;
     }
 
     if (req.method === 'GET' && url.pathname === '/volumes') {
-      sendJson(res, 200, { volumes: await listVolumes() });
+      const filter = parseRuntimeFilter(url.searchParams.get('runtime'));
+      if (!filter) {
+        sendJson(res, 400, { error: 'bad-runtime', message: 'runtime must be all, docker or podman.' });
+        return;
+      }
+      const result = await listAcrossRuntimes((runtime) => listVolumes(runtime), filter);
+      if (!result.ok) {
+        sendJson(res, result.status, { error: result.error, message: result.message });
+        return;
+      }
+      sendJson(res, 200, { volumes: result.items, partial: result.partial });
       return;
     }
 
     if (req.method === 'GET' && url.pathname === '/networks') {
-      sendJson(res, 200, { networks: await listNetworks() });
+      const filter = parseRuntimeFilter(url.searchParams.get('runtime'));
+      if (!filter) {
+        sendJson(res, 400, { error: 'bad-runtime', message: 'runtime must be all, docker or podman.' });
+        return;
+      }
+      const result = await listAcrossRuntimes((runtime) => listNetworks(runtime), filter);
+      if (!result.ok) {
+        sendJson(res, result.status, { error: result.error, message: result.message });
+        return;
+      }
+      sendJson(res, 200, { networks: result.items, partial: result.partial });
       return;
     }
 
@@ -854,7 +955,8 @@ const server = http.createServer(async (req, res) => {
         sendBadId(res);
         return;
       }
-      const result = await getContainerInspect(id);
+      const runtime = await resolveRuntimeForId(id);
+      const result = await getContainerInspect(id, runtime);
       if (!result.ok) {
         sendJson(res, result.status, { error: result.error, message: result.message });
         return;
@@ -883,7 +985,8 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 400, { error: 'bad-body', message: 'Expected JSON { command: string }.' });
         return;
       }
-      const execResult = await execInContainer(id, command);
+      const runtime = await resolveRuntimeForId(id);
+      const execResult = await execInContainer(id, command, runtime);
       if (!execResult.ok) {
         sendJson(res, execResult.status, { error: execResult.error, message: execResult.message });
         return;
@@ -908,7 +1011,8 @@ const server = http.createServer(async (req, res) => {
         sendBadId(res);
         return;
       }
-      const listed = await listContainerFs(id, pathValue);
+      const runtime = await resolveRuntimeForId(id);
+      const listed = await listContainerFs(id, pathValue, runtime);
       if (!listed.ok) {
         sendJson(res, listed.status, { error: listed.error, message: listed.message });
         return;
@@ -933,7 +1037,8 @@ const server = http.createServer(async (req, res) => {
         sendBadId(res);
         return;
       }
-      const read = await readContainerFile(id, pathValue);
+      const runtime = await resolveRuntimeForId(id);
+      const read = await readContainerFile(id, pathValue, runtime);
       if (!read.ok) {
         sendJson(res, read.status, { error: read.error, message: read.message });
         return;
@@ -949,7 +1054,8 @@ const server = http.createServer(async (req, res) => {
         sendBadId(res);
         return;
       }
-      const logs = await readContainerLogs(id, url.searchParams.get('tail'));
+      const runtime = await resolveRuntimeForId(id);
+      const logs = await readContainerLogs(id, url.searchParams.get('tail'), runtime);
       if (!logs.ok) {
         sendJson(res, logs.status, { error: logs.error, message: logs.message });
         return;
@@ -965,7 +1071,8 @@ const server = http.createServer(async (req, res) => {
         sendBadId(res);
         return;
       }
-      await docker(['stop', id]);
+      const runtime = await resolveRuntimeForId(id);
+      await runCli(runtime, ['stop', id]);
       sendJson(res, 200, { ok: true });
       return;
     }
@@ -977,7 +1084,8 @@ const server = http.createServer(async (req, res) => {
         sendBadId(res);
         return;
       }
-      await docker(['start', id]);
+      const runtime = await resolveRuntimeForId(id);
+      await runCli(runtime, ['start', id]);
       sendJson(res, 200, { ok: true });
       return;
     }
@@ -989,7 +1097,8 @@ const server = http.createServer(async (req, res) => {
         sendBadId(res);
         return;
       }
-      await docker(['restart', id]);
+      const runtime = await resolveRuntimeForId(id);
+      await runCli(runtime, ['restart', id]);
       sendJson(res, 200, { ok: true });
       return;
     }
@@ -1001,9 +1110,10 @@ const server = http.createServer(async (req, res) => {
         sendBadId(res);
         return;
       }
+      const runtime = await resolveRuntimeForId(id);
       const withVolumes = url.searchParams.get('volumes') === '1';
       const args = withVolumes ? ['rm', '-f', '-v', id] : ['rm', '-f', id];
-      await docker(args, { timeout: 60_000 });
+      await runCli(runtime, args, { timeout: 60_000 });
       sendJson(res, 200, { ok: true });
       return;
     }
@@ -1030,7 +1140,16 @@ const server = http.createServer(async (req, res) => {
         sendBadId(res);
         return;
       }
-      await docker(['stop', ...ids], { timeout: 120_000 });
+      const resolved = await Promise.all(ids.map((id) => resolveRuntimeForId(id)));
+      const groups = { docker: [], podman: [] };
+      ids.forEach((id, index) => {
+        groups[resolved[index] === 'docker' ? 'docker' : 'podman'].push(id);
+      });
+      for (const runtime of ['docker', 'podman']) {
+        if (groups[runtime].length > 0) {
+          await runCli(runtime, ['stop', ...groups[runtime]], { timeout: 120_000 });
+        }
+      }
       sendJson(res, 200, { ok: true, count: ids.length });
       return;
     }

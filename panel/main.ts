@@ -18,6 +18,7 @@ import type {
   FsEntry,
   SystemDfItem,
   ContainerRuntime,
+  RuntimeFilterId,
 } from './types.ts';
 import { renderTabs, renderStatsGroup, renderSystemView } from './components/CatalogView.ts';
 import { renderExecView } from './components/ExecView.ts';
@@ -45,6 +46,8 @@ let networks: NetworkRow[] = [];
 let systemDf: SystemDfItem[] = [];
 let runtime: ContainerRuntime = 'docker';
 let runtimeBadge: { update: (next: { label: string }) => void } | null = null;
+let runtimeFilter: RuntimeFilterId = 'all';
+let runtimeSegEl: HTMLElement | null = null;
 
 let activeTab: MainTabId = 'containers';
 let tabScrollLeft = 0;
@@ -375,14 +378,22 @@ const updateRuntimePill = (): void => {
   runtimeBadge?.update({ label: runtime });
 };
 
+const setRuntimeSegActive = (active: RuntimeFilterId): void => {
+  if (!runtimeSegEl) return;
+  for (const child of Array.from(runtimeSegEl.children)) {
+    const btn = child as HTMLElement;
+    btn.dataset.active = btn.dataset.value === active ? 'true' : 'false';
+  }
+};
+
 const loadCatalog = async (): Promise<void> => {
   const generation = ++loadGeneration;
   try {
     const [resC, resI, resV, resN, resS, resR] = await Promise.all([
-      host.serviceRequest({ method: 'GET', path: '/containers' }),
-      host.serviceRequest({ method: 'GET', path: '/images' }),
-      host.serviceRequest({ method: 'GET', path: '/volumes' }),
-      host.serviceRequest({ method: 'GET', path: '/networks' }),
+      host.serviceRequest({ method: 'GET', path: '/containers', query: { runtime: runtimeFilter } }),
+      host.serviceRequest({ method: 'GET', path: '/images', query: { runtime: runtimeFilter } }),
+      host.serviceRequest({ method: 'GET', path: '/volumes', query: { runtime: runtimeFilter } }),
+      host.serviceRequest({ method: 'GET', path: '/networks', query: { runtime: runtimeFilter } }),
       host.serviceRequest({ method: 'GET', path: '/system/df' }),
       host.serviceRequest({ method: 'GET', path: '/runtime' }),
     ]);
@@ -1076,6 +1087,28 @@ const buildAppSkeleton = (): void => {
     paint();
   });
   toolbar.appendChild(searchInput);
+
+  runtimeSegEl = document.createElement('div');
+  runtimeSegEl.className = 'docker-runtime-seg';
+  const segOptions: Array<{ id: RuntimeFilterId; label: string }> = [
+    { id: 'all', label: 'Todos' },
+    { id: 'docker', label: 'Docker' },
+    { id: 'podman', label: 'Podman' },
+  ];
+  for (const opt of segOptions) {
+    const segBtn = document.createElement('button');
+    segBtn.className = 'docker-runtime-seg-btn';
+    segBtn.dataset.value = opt.id;
+    segBtn.dataset.active = runtimeFilter === opt.id ? 'true' : 'false';
+    segBtn.textContent = opt.label;
+    segBtn.addEventListener('click', () => {
+      runtimeFilter = opt.id;
+      setRuntimeSegActive(opt.id);
+      void loadCatalog();
+    });
+    runtimeSegEl.appendChild(segBtn);
+  }
+  toolbar.appendChild(runtimeSegEl);
 
   header.appendChild(titleRow);
   header.appendChild(headerBannerContainer);

@@ -394,6 +394,32 @@
       color: #38bdf8;
       background: rgba(2, 132, 199, 0.2);
     }
+    .docker-runtime-seg {
+      display: inline-flex;
+      flex: 0 0 auto;
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--surface-elevated, var(--oc-elevated, transparent)) 60%, transparent);
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--interactive-border, var(--oc-border, currentColor)) 50%, transparent);
+      overflow: hidden;
+    }
+    .docker-runtime-seg-btn {
+      border: 0;
+      background: transparent;
+      color: var(--surface-muted-foreground, var(--oc-muted, gray));
+      padding: 6px 10px;
+      font: inherit;
+      font-size: 0.75rem;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .docker-runtime-seg-btn:hover {
+      color: var(--surface-foreground, var(--oc-fg, inherit));
+    }
+    .docker-runtime-seg-btn[data-active="true"] {
+      background: color-mix(in srgb, var(--primary, var(--oc-primary, currentColor)) 16%, transparent);
+      color: var(--primary, var(--oc-primary, currentColor));
+      font-weight: 600;
+    }
     .docker-meta,
     .docker-status {
       overflow: hidden;

@@ -129,6 +129,8 @@ export type SystemDfItem = {
 
 export type ContainerRuntime = 'docker' | 'podman';
 
+export type RuntimeFilterId = 'all' | ContainerRuntime;
+
 export type RuntimeInfo = {
   runtime: ContainerRuntime;
 };

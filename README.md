@@ -1,3 +1,6 @@
+> ⚠️ **Personal work in progress — NOT an official OpenChamber extension.**
+> This is a personal, public project shared openly (MIT, like other extensions). It is not submitted to any official catalog. Feedback and improvements are welcome — use at your own risk until the author approves it for general use.
+
 # Containers extension for OpenChamber
 
 A comprehensive OpenChamber GUI panel to inspect and manage **Docker or Podman** containers, Compose stacks, images, volumes, networks, and system storage.
